@@ -2,6 +2,7 @@ import random
 import math
 import arcade
 import os
+import numpy as np
 
 from typing import cast
 
@@ -22,7 +23,7 @@ class TurningSprite(arcade.Sprite):
     def update(self):
         """ Move the sprite """
         super().update()
-        self.angle = math.degrees(math.atan2(self.change_y, self.change_x))
+        self.angle = math.degrees(math.atan2(self.change_y, self.change_x)) - 90
 
 
 class ShipSprite(arcade.Sprite):
@@ -39,9 +40,10 @@ class ShipSprite(arcade.Sprite):
 
         # Info on where we are going.
         # Angle comes in automatically from the parent class.
-        self.thrust = 0
-        self.speed = 0
-        self.max_speed = 4
+        self.mass = 1.0
+        self.thrust = np.zeros([2])
+        self.velocity = np.zeros([2])
+        self.vMax = np.ones([2])*4
         self.drag = 0.05
         self.respawning = 0
 
@@ -57,7 +59,6 @@ class ShipSprite(arcade.Sprite):
         self.respawning = 1
         self.center_x = SCREEN_WIDTH / 2
         self.center_y = SCREEN_HEIGHT / 2
-        self.angle = 0
 
     def update(self):
         """
@@ -69,24 +70,16 @@ class ShipSprite(arcade.Sprite):
             if self.respawning > 250:
                 self.respawning = 0
                 self.alpha = 255
-        if self.speed > 0:
-            self.speed -= self.drag
-            if self.speed < 0:
-                self.speed = 0
 
-        if self.speed < 0:
-            self.speed += self.drag
-            if self.speed > 0:
-                self.speed = 0
+        dv = -self.drag * self.velocity + self.thrust / self.mass
+        self.velocity += dv
+        tooFast = self.velocity > self.vMax
+        self.velocity[tooFast] = self.vMax[tooFast]
+        tooSlow = self.velocity < -self.vMax
+        self.velocity[tooSlow] = - self.vMax[tooFast]
 
-        self.speed += self.thrust
-        if self.speed > self.max_speed:
-            self.speed = self.max_speed
-        if self.speed < -self.max_speed:
-            self.speed = -self.max_speed
-
-        self.change_x = -math.sin(math.radians(self.angle)) * self.speed
-        self.change_y = math.cos(math.radians(self.angle)) * self.speed
+        self.change_x = self.velocity[0]
+        self.change_y = self.velocity[1]
 
         self.center_x += self.change_x
         self.center_y += self.change_y
@@ -155,6 +148,8 @@ class MyGame(arcade.Window):
         self.score = 0
         self.player_sprite = None
         self.lives = 3
+
+        self.mouse_location = [0,0]
 
         # Sounds
         self.laser_sound = arcade.load_sound(":resources:sounds/hurt5.wav")
@@ -231,7 +226,38 @@ class MyGame(arcade.Window):
     def on_key_press(self, symbol, modifiers):
         """ Called whenever a key is pressed. """
         # Shoot if the player hit the space bar and we aren't respawning.
-        if not self.player_sprite.respawning and symbol == arcade.key.SPACE:
+
+        if symbol == arcade.key.A:
+            self.player_sprite.thrust[0] = -0.15
+        elif symbol == arcade.key.D:
+            self.player_sprite.thrust[0] = 0.15
+        elif symbol == arcade.key.W:
+            self.player_sprite.thrust[1] = 0.15
+        elif symbol == arcade.key.S:
+            self.player_sprite.thrust[1] = -.15
+
+    def on_key_release(self, symbol, modifiers):
+        """ Called whenever a key is released. """
+        if symbol == arcade.key.A:
+            self.player_sprite.thrust[0] = 0
+        elif symbol == arcade.key.D:
+            self.player_sprite.thrust[0] = 0
+        elif symbol == arcade.key.W:
+            self.player_sprite.thrust[1] = 0
+        elif symbol == arcade.key.S:
+            self.player_sprite.thrust[1] = 0
+
+    def on_mouse_motion(self, x, y, dx, dy):
+        """
+        Called whenever the mouse moves.
+        """
+        self.mouse_location = [x, y]
+
+    def on_mouse_press(self, x, y, button, modifiers):
+        """
+        Called whenever the mouse button is clicked.
+        """
+        if not self.player_sprite.respawning and button == arcade.MOUSE_BUTTON_LEFT:
             bullet_sprite = TurningSprite("resources/images/effects/cannonball/sprite_1.png",
                                           SCALE)
             bullet_sprite.guid = "Bullet"
@@ -250,26 +276,6 @@ class MyGame(arcade.Window):
             self.bullet_list.append(bullet_sprite)
 
             arcade.play_sound(self.laser_sound)
-
-        if symbol == arcade.key.A:
-            self.player_sprite.change_angle = 3
-        elif symbol == arcade.key.D:
-            self.player_sprite.change_angle = -3
-        elif symbol == arcade.key.W:
-            self.player_sprite.thrust = 0.15
-        elif symbol == arcade.key.S:
-            self.player_sprite.thrust = -.2
-
-    def on_key_release(self, symbol, modifiers):
-        """ Called whenever a key is released. """
-        if symbol == arcade.key.A:
-            self.player_sprite.change_angle = 0
-        elif symbol == arcade.key.D:
-            self.player_sprite.change_angle = 0
-        elif symbol == arcade.key.W:
-            self.player_sprite.thrust = 0
-        elif symbol == arcade.key.S:
-            self.player_sprite.thrust = 0
 
     # def split_asteroid(self, asteroid: TeapotSprite):
     #     """ Split an asteroid into chunks. """
@@ -346,6 +352,12 @@ class MyGame(arcade.Window):
     def on_update(self, x):
         """ Move everything """
 
+
+        dx =  self.mouse_location[0] - self.player_sprite.center_x
+        dy = self.mouse_location[1] - self.player_sprite.center_y
+
+        self.player_sprite.angle = 180*math.atan2(dy, dx)/math.pi - 90
+
         self.frame_count += 1
 
         if not self.game_over:
@@ -376,7 +388,7 @@ class MyGame(arcade.Window):
 
             if not self.player_sprite.respawning:
                 asteroids = arcade.check_for_collision_with_list(self.player_sprite,
-                                                                 self.asteroid_list)
+                                                                 self.enemy_list)
                 if len(asteroids) > 0:
                     if self.lives > 0:
                         self.lives -= 1
