@@ -3,6 +3,7 @@ import math
 import arcade
 import os
 import numpy as np
+import time
 
 from typing import cast
 
@@ -43,7 +44,7 @@ class ShipSprite(arcade.Sprite):
         self.mass = 1.0
         self.thrust = np.zeros([2])
         self.velocity = np.zeros([2])
-        self.vMax = np.ones([2])*4
+        self.vMax = np.ones([2])*8
         self.drag = 0.05
         self.respawning = 0
 
@@ -67,7 +68,7 @@ class ShipSprite(arcade.Sprite):
         if self.respawning:
             self.respawning += 1
             self.alpha = self.respawning
-            if self.respawning > 250:
+            if self.respawning > 150:
                 self.respawning = 0
                 self.alpha = 255
 
@@ -149,7 +150,21 @@ class MyGame(arcade.Window):
         self.player_sprite = None
         self.lives = 3
 
+        # Set up input buffers
         self.mouse_location = [0,0]
+        self.mouse_pressed = {arcade.MOUSE_BUTTON_LEFT:False,
+                            arcade.MOUSE_BUTTON_MIDDLE:False,
+                            arcade.MOUSE_BUTTON_RIGHT:False}
+        self.input_pressed = {'up':False,
+                            'down':False,
+                            'left':False,
+                            'right':False}
+        self.autoclick_period = {arcade.MOUSE_BUTTON_LEFT:0.25,
+                            arcade.MOUSE_BUTTON_MIDDLE:1.0,
+                            arcade.MOUSE_BUTTON_RIGHT:1.0}
+        self.last_autoclick = {arcade.MOUSE_BUTTON_LEFT:0.0,
+                            arcade.MOUSE_BUTTON_MIDDLE:0.0,
+                            arcade.MOUSE_BUTTON_RIGHT:0.0}
 
         # Sounds
         self.laser_sound = arcade.load_sound(":resources:sounds/hurt5.wav")
@@ -226,26 +241,25 @@ class MyGame(arcade.Window):
     def on_key_press(self, symbol, modifiers):
         """ Called whenever a key is pressed. """
         # Shoot if the player hit the space bar and we aren't respawning.
-
         if symbol == arcade.key.A:
-            self.player_sprite.thrust[0] = -0.15
+            self.input_pressed['left'] = True
         elif symbol == arcade.key.D:
-            self.player_sprite.thrust[0] = 0.15
+            self.input_pressed['right'] = True
         elif symbol == arcade.key.W:
-            self.player_sprite.thrust[1] = 0.15
+            self.input_pressed['up'] = True
         elif symbol == arcade.key.S:
-            self.player_sprite.thrust[1] = -.15
+            self.input_pressed['down'] = True
 
     def on_key_release(self, symbol, modifiers):
         """ Called whenever a key is released. """
         if symbol == arcade.key.A:
-            self.player_sprite.thrust[0] = 0
+            self.input_pressed['left'] = False
         elif symbol == arcade.key.D:
-            self.player_sprite.thrust[0] = 0
+            self.input_pressed['right'] = False
         elif symbol == arcade.key.W:
-            self.player_sprite.thrust[1] = 0
+            self.input_pressed['up'] = False
         elif symbol == arcade.key.S:
-            self.player_sprite.thrust[1] = 0
+            self.input_pressed['down'] = False
 
     def on_mouse_motion(self, x, y, dx, dy):
         """
@@ -257,25 +271,11 @@ class MyGame(arcade.Window):
         """
         Called whenever the mouse button is clicked.
         """
-        if not self.player_sprite.respawning and button == arcade.MOUSE_BUTTON_LEFT:
-            bullet_sprite = TurningSprite("resources/images/effects/cannonball/sprite_1.png",
-                                          SCALE)
-            bullet_sprite.guid = "Bullet"
+        self.mouse_pressed[button] = True
+        
 
-            bullet_speed = 13
-            bullet_sprite.change_y = \
-                math.cos(math.radians(self.player_sprite.angle)) * bullet_speed
-            bullet_sprite.change_x = \
-                -math.sin(math.radians(self.player_sprite.angle)) \
-                * bullet_speed
-
-            bullet_sprite.center_x = self.player_sprite.center_x
-            bullet_sprite.center_y = self.player_sprite.center_y
-            bullet_sprite.update()
-
-            self.bullet_list.append(bullet_sprite)
-
-            arcade.play_sound(self.laser_sound)
+    def on_mouse_release(self, x: float, y: float, button: int, modifiers: int):
+        self.mouse_pressed[button] = False
 
     # def split_asteroid(self, asteroid: TeapotSprite):
     #     """ Split an asteroid into chunks. """
@@ -352,11 +352,7 @@ class MyGame(arcade.Window):
     def on_update(self, x):
         """ Move everything """
 
-
-        dx =  self.mouse_location[0] - self.player_sprite.center_x
-        dy = self.mouse_location[1] - self.player_sprite.center_y
-
-        self.player_sprite.angle = 180*math.atan2(dy, dx)/math.pi - 90
+        self.process_input()
 
         self.frame_count += 1
 
@@ -400,6 +396,38 @@ class MyGame(arcade.Window):
                     else:
                         self.game_over = True
                         print("Game over")
+
+    def process_input(self):
+        dx =  self.mouse_location[0] - self.player_sprite.center_x
+        dy = self.mouse_location[1] - self.player_sprite.center_y
+
+        self.player_sprite.angle = 180*math.atan2(dy, dx)/math.pi - 90
+
+        if not self.player_sprite.respawning and self.mouse_pressed[arcade.MOUSE_BUTTON_LEFT] and \
+            time.time() - self.last_autoclick[arcade.MOUSE_BUTTON_LEFT] > self.autoclick_period[arcade.MOUSE_BUTTON_LEFT]:
+            
+            bullet_sprite = TurningSprite("resources/images/effects/cannonball/sprite_1.png",
+                                          SCALE)
+            bullet_sprite.guid = "Bullet"
+
+            bullet_speed = 13
+            bullet_sprite.change_y = \
+                math.cos(math.radians(self.player_sprite.angle)) * bullet_speed
+            bullet_sprite.change_x = \
+                -math.sin(math.radians(self.player_sprite.angle)) \
+                * bullet_speed
+
+            bullet_sprite.center_x = self.player_sprite.center_x
+            bullet_sprite.center_y = self.player_sprite.center_y
+            bullet_sprite.update()
+
+            self.bullet_list.append(bullet_sprite)
+
+            arcade.play_sound(self.laser_sound)
+            self.last_autoclick[arcade.MOUSE_BUTTON_LEFT] = time.time()
+
+        self.player_sprite.thrust[0] = 0.15 * (self.input_pressed['right'] - self.input_pressed['left'])
+        self.player_sprite.thrust[1] = 0.15 * (self.input_pressed['up'] - self.input_pressed['down'])
 
 
 def main():
