@@ -8,16 +8,25 @@ import time
 from typing import cast
 
 STARTING_ASTEROID_COUNT = 3
-SCALE = 0.5
-OFFSCREEN_SPACE = 300
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
+SCALE = 1.0
+OFFSCREEN_SPACE = 000
+SCREEN_WIDTH = 1000
+SCREEN_HEIGHT = 700
 SCREEN_TITLE = "Something about engineers"
 LEFT_LIMIT = -OFFSCREEN_SPACE
 RIGHT_LIMIT = SCREEN_WIDTH + OFFSCREEN_SPACE
 BOTTOM_LIMIT = -OFFSCREEN_SPACE
 TOP_LIMIT = SCREEN_HEIGHT + OFFSCREEN_SPACE
+PIX_PER_M = 32
 
+
+def load_anim_frames(directory):
+    frames = []
+    for filename in os.listdir(directory):
+        if filename.endswith(".png"):
+            path = os.path.join(directory, filename)
+            frames.append(arcade.load_texture(path))
+    return frames
 
 class TurningSprite(arcade.Sprite):
     """ Sprite that sets its angle to the direction it is traveling in. """
@@ -45,8 +54,9 @@ class ShipSprite(arcade.Sprite):
         self.thrust = np.zeros([2])
         self.velocity = np.zeros([2])
         self.vMax = np.ones([2])*8
-        self.drag = 0.05
+        self.drag = 0.03
         self.respawning = 0
+        self.bounce_ratio = 0.3
 
         # Mark that we are respawning.
         self.respawn()
@@ -67,7 +77,7 @@ class ShipSprite(arcade.Sprite):
         """
         if self.respawning:
             self.respawning += 1
-            self.alpha = self.respawning
+            self.alpha = 150
             if self.respawning > 150:
                 self.respawning = 0
                 self.alpha = 255
@@ -77,7 +87,7 @@ class ShipSprite(arcade.Sprite):
         tooFast = self.velocity > self.vMax
         self.velocity[tooFast] = self.vMax[tooFast]
         tooSlow = self.velocity < -self.vMax
-        self.velocity[tooSlow] = - self.vMax[tooFast]
+        self.velocity[tooSlow] = - self.vMax[tooSlow]
 
         self.change_x = self.velocity[0]
         self.change_y = self.velocity[1]
@@ -86,20 +96,24 @@ class ShipSprite(arcade.Sprite):
         self.center_y += self.change_y
 
         # If the ship goes off-screen, move it to the other side of the window
-        if self.right < 0:
-            self.left = SCREEN_WIDTH
+        if self.left < 0:
+            self.left = 0
+            self.velocity[0] *= - self.bounce_ratio
 
-        if self.left > SCREEN_WIDTH:
-            self.right = 0
+        if self.right > SCREEN_WIDTH:
+            self.right = SCREEN_WIDTH
+            self.velocity[0] *= - self.bounce_ratio
 
         if self.bottom < 0:
-            self.top = SCREEN_HEIGHT
+            self.bottom = 0
+            self.velocity[1] *= - self.bounce_ratio
 
         if self.top > SCREEN_HEIGHT:
-            self.bottom = 0
+            self.top = SCREEN_HEIGHT
+            self.velocity[1] *= - self.bounce_ratio
 
         """ Call the parent class. """
-        super().update()
+        # super().update()
 
 
 class TeapotSprite(arcade.Sprite):
@@ -107,11 +121,34 @@ class TeapotSprite(arcade.Sprite):
 
     def __init__(self, image_file_name, scale):
         super().__init__(image_file_name, scale=scale)
+        directory = os.path.dirname(image_file_name)
+        self.textures = load_anim_frames(directory)
+        self.cur_texture_index = 1
+        self.texture = self.textures[self.cur_texture_index]
         self.size = 0
+        self.max_health = 2
+        self.low_health_threshold = 1
+        self.health = self.max_health
+        self.alive = True
+        self.velocity = np.array([0,0])
+        self.mass = 2
+        self.f_max = 5
+        self.speed_max = 4
+        self.player_loc = np.array([SCREEN_WIDTH/2,SCREEN_HEIGHT/2])
 
-    def update(self):
+    def on_update(self, delta_time = 1/60):
         """ Move the asteroid around. """
-        super().update()
+
+        if self.alive:
+            r = self.player_loc - self.position
+            force = self.f_max * r / np.linalg.norm(r)
+            accel = force / self.mass
+            self.velocity = self.velocity + accel*delta_time
+            speed = np.linalg.norm(self.velocity)
+            if speed > self.speed_max:
+                self.velocity = self.velocity/ speed * self.speed_max
+            self.position = self._position + self.velocity * delta_time * PIX_PER_M
+
         if self.center_x < LEFT_LIMIT:
             self.center_x = RIGHT_LIMIT
         if self.center_x > RIGHT_LIMIT:
@@ -120,6 +157,18 @@ class TeapotSprite(arcade.Sprite):
             self.center_y = BOTTOM_LIMIT
         if self.center_y < BOTTOM_LIMIT:
             self.center_y = TOP_LIMIT
+
+    def process_hit(self):
+        self.health -= 1
+        if self.health <= 0:
+            self.texture = self.textures[-1]
+            self.alive = False
+        elif self.health > 0 and self.health <= self.low_health_threshold:
+            self.texture = self.textures[2]
+            
+            
+
+
 
 
 class MyGame(arcade.Window):
@@ -134,6 +183,8 @@ class MyGame(arcade.Window):
         # as mentioned at the top of this program.
         file_path = os.path.dirname(os.path.abspath(__file__))
         os.chdir(file_path)
+
+        arcade.set_background_color(arcade.color.PINE_GREEN)
 
         self.frame_count = 0
 
@@ -151,7 +202,7 @@ class MyGame(arcade.Window):
         self.lives = 3
 
         # Set up input buffers
-        self.mouse_location = [0,0]
+        self.mouse_location = np.array([0,0])
         self.mouse_pressed = {arcade.MOUSE_BUTTON_LEFT:False,
                             arcade.MOUSE_BUTTON_MIDDLE:False,
                             arcade.MOUSE_BUTTON_RIGHT:False}
@@ -181,7 +232,7 @@ class MyGame(arcade.Window):
 
         # Sprite lists
         self.player_sprite_list = arcade.SpriteList()
-        self.asteroid_list = arcade.SpriteList()
+        self.enemy_list = arcade.SpriteList()
         self.bullet_list = arcade.SpriteList()
         self.ship_life_list = arcade.SpriteList()
 
@@ -226,16 +277,16 @@ class MyGame(arcade.Window):
         arcade.start_render()
 
         # Draw all the sprites.
-        self.enemy_list.draw()
-        self.ship_life_list.draw()
-        self.bullet_list.draw()
-        self.player_sprite_list.draw()
+        self.enemy_list.draw(pixelated=True)
+        self.ship_life_list.draw(pixelated=True)
+        self.bullet_list.draw(pixelated=True)
+        self.player_sprite_list.draw(pixelated=True)
 
         # Put the text on the screen.
         output = f"Score: {self.score}"
         arcade.draw_text(output, 10, 70, arcade.color.WHITE, 13)
 
-        output = f"Enemy Count: {len(self.asteroid_list)}"
+        output = f"Enemy Count: {len(self.enemy_list)}"
         arcade.draw_text(output, 10, 50, arcade.color.WHITE, 13)
 
     def on_key_press(self, symbol, modifiers):
@@ -349,7 +400,7 @@ class MyGame(arcade.Window):
     #     elif asteroid.size == 1:
     #         self.hit_sound4.play()
 
-    def on_update(self, x):
+    def on_update(self, delta_time):
         """ Move everything """
 
         self.process_input()
@@ -357,7 +408,7 @@ class MyGame(arcade.Window):
         self.frame_count += 1
 
         if not self.game_over:
-            self.enemy_list.update()
+            self.enemy_list.on_update(delta_time)
             self.bullet_list.update()
             self.player_sprite_list.update()
 
@@ -368,7 +419,7 @@ class MyGame(arcade.Window):
                 for enemy in enemies:
                     # expected AsteroidSprite, got Sprite instead
                     # self.split_asteroid(cast(TeapotSprite, asteroid))
-                    enemy.remove_from_sprite_lists()
+                    enemy.process_hit()
                     bullet.remove_from_sprite_lists()
 
                 # Remove bullet if it goes off-screen
@@ -410,7 +461,7 @@ class MyGame(arcade.Window):
                                           SCALE)
             bullet_sprite.guid = "Bullet"
 
-            bullet_speed = 13
+            bullet_speed = 30
             bullet_sprite.change_y = \
                 math.cos(math.radians(self.player_sprite.angle)) * bullet_speed
             bullet_sprite.change_x = \
@@ -426,8 +477,9 @@ class MyGame(arcade.Window):
             arcade.play_sound(self.laser_sound)
             self.last_autoclick[arcade.MOUSE_BUTTON_LEFT] = time.time()
 
-        self.player_sprite.thrust[0] = 0.15 * (self.input_pressed['right'] - self.input_pressed['left'])
-        self.player_sprite.thrust[1] = 0.15 * (self.input_pressed['up'] - self.input_pressed['down'])
+        self.player_sprite.thrust[0] = 0.3 * (self.input_pressed['right'] - self.input_pressed['left'])
+        self.player_sprite.thrust[1] = 0.3 * (self.input_pressed['up'] - self.input_pressed['down'])
+
 
 
 def main():
